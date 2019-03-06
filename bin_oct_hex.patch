@@ -1,0 +1,13 @@
+diff --git a/Objects/longobject.c b/Objects/longobject.c
+index 3864cec..b959597 100644
+--- a/Objects/longobject.c
++++ b/Objects/longobject.c
+@@ -1935,7 +1935,7 @@ _PyLong_Format(PyObject *obj, int base)
+     if (base == 10)
+         err = long_to_decimal_string_internal(obj, &str, NULL, NULL, NULL);
+     else
+-        err = long_format_binary(obj, base, 1, &str, NULL, NULL, NULL);
++        err = long_format_binary(obj, base, 0, &str, NULL, NULL, NULL);
+     if (err == -1)
+         return NULL;
+     return str;
