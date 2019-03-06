@@ -1,0 +1,95 @@
+diff --git a/Objects/unicodeobject.c b/Objects/unicodeobject.c
+index 0e64bf9..8dc5c7e 100644
+--- a/Objects/unicodeobject.c
++++ b/Objects/unicodeobject.c
+@@ -10483,6 +10483,80 @@ split(PyObject *self,
+ }
+ 
+ static PyObject *
++split_by_len(PyObject *self,
++      PyObject *length)
++{
++    void *buf;
++    Py_ssize_t len1;
++    Py_ssize_t len2;
++    PyObject* out;
++    PyObject* sub;
++
++    if (PyUnicode_READY(self) == -1)
++        return NULL;
++
++    switch(_PyLong_Sign(length)) {
++    case 0:
++        PyErr_SetString(PyExc_ValueError, "split length can't be 0");
++        return NULL;
++    case -1:
++        PyErr_SetString(PyExc_ValueError, "split length must be positive");
++        return NULL;
++    }
++
++    len1 = PyUnicode_GET_LENGTH(self);
++    len2 = PyLong_AsSsize_t(length);
++
++    if (len2 == (Py_ssize_t) -1) {
++        PyErr_SetString(PyExc_OverflowError, "split length is too big");
++        return NULL;
++    }
++
++    if (len2 >= len1) {
++        out = PyList_New(1);
++        if (out == NULL)
++            return NULL;
++        PyList_SET_ITEM(out, 0, self);
++        Py_INCREF(self);
++        return out;
++    }
++
++    buf = PyUnicode_DATA(self);
++    
++    register long list_len = 1 + ((len1 - 1) / len2); // len1 / len2 with rounding up
++    out = PyList_New(list_len);
++    int count = 0;
++    for (long i = 0; i < len1; i += len2) {
++        register long possible_len = (i + len2 <= len1) ? len2 : len1 - i;
++        switch (PyUnicode_KIND(self)) {
++        case PyUnicode_1BYTE_KIND:
++            if (PyUnicode_IS_ASCII(self))
++                sub = _PyUnicode_FromASCII(buf + i, possible_len);
++            else
++                sub = _PyUnicode_FromUCS1(buf + i, possible_len);
++            break;
++        case PyUnicode_2BYTE_KIND:
++            sub = _PyUnicode_FromUCS2(buf + i * 2, possible_len);
++            break;
++        case PyUnicode_4BYTE_KIND:
++            sub = _PyUnicode_FromUCS4(buf + i * 4, possible_len);
++            break;
++        default:
++            assert(0);
++            return NULL;
++        }
++        if (sub == NULL) {
++            Py_DECREF(out);
++            return NULL;
++        }
++        PyList_SET_ITEM(out, count, sub);
++        count += 1;
++    }
++
++    return out;
++}
++
++static PyObject *
+ rsplit(PyObject *self,
+        PyObject *substring,
+        Py_ssize_t maxcount)
+@@ -13008,6 +13082,9 @@ unicode_split(PyObject *self, PyObject *args, PyObject *kwds)
+     if (substring == Py_None)
+         return split(self, NULL, maxcount);
+ 
++    if (PyLong_CheckExact(substring))
++        return split_by_len(self, substring);
++
+     if (PyUnicode_Check(substring))
+         return split(self, substring, maxcount);
+ 
