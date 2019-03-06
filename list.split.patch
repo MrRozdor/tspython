@@ -1,0 +1,131 @@
+diff --git a/Include/listobject.h b/Include/listobject.h
+index 31843b5..868cf58 100644
+--- a/Include/listobject.h
++++ b/Include/listobject.h
+@@ -55,6 +55,7 @@ PyAPI_FUNC(PyObject *) PyList_GetItem(PyObject *, Py_ssize_t);
+ PyAPI_FUNC(int) PyList_SetItem(PyObject *, Py_ssize_t, PyObject *);
+ PyAPI_FUNC(int) PyList_Insert(PyObject *, Py_ssize_t, PyObject *);
+ PyAPI_FUNC(int) PyList_Append(PyObject *, PyObject *);
++PyAPI_FUNC(PyObject *) PyList_Split(PyObject *, Py_ssize_t);
+ PyAPI_FUNC(PyObject *) PyList_GetSlice(PyObject *, Py_ssize_t, Py_ssize_t);
+ PyAPI_FUNC(int) PyList_SetSlice(PyObject *, Py_ssize_t, Py_ssize_t, PyObject *);
+ PyAPI_FUNC(int) PyList_Sort(PyObject *);
+diff --git a/Objects/listobject.c b/Objects/listobject.c
+index ea8310f..ab32d13 100644
+--- a/Objects/listobject.c
++++ b/Objects/listobject.c
+@@ -689,6 +689,56 @@ PyList_SetSlice(PyObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
+ }
+ 
+ static PyObject *
++list_split(PyObject *self,
++      Py_ssize_t length)
++{
++    Py_ssize_t len_self;
++    Py_ssize_t count;
++    PyObject* out;
++    PyObject* item;
++
++    len_self = Py_SIZE(self);
++
++    if (length >= len_self) {
++        out = PyList_New(1);
++        if (out == NULL)
++            return NULL;
++        PyList_SET_ITEM(out, 0, self);
++        Py_INCREF(self);
++        return out;
++    }
++    
++    register Py_ssize_t new_len = 1 + ((len_self - 1) / length); // len_self / length with rounding up
++    out = PyList_New(new_len);
++    count = 0;
++    for (Py_ssize_t i = 0; i < len_self; i += length) {
++        register Py_ssize_t possible_len = (i + length <= len_self) ? length : len_self - i;
++        item = PyList_GetSlice(self, i, i + possible_len);
++        if (item == NULL) {
++            Py_DECREF(out);
++            return NULL;
++        }
++        PyList_SET_ITEM(out, count, item);
++        count += 1;
++    }
++    return out;
++}
++
++PyObject *
++PyList_Split(PyObject *list, Py_ssize_t length)
++{
++    if (!PyList_Check(list)) {
++        PyErr_BadInternalCall();
++        return NULL;
++    }
++    if (length <= 0) {
++        PyErr_BadInternalCall();
++        return NULL;
++    }
++    return list_split(list, length);
++}
++
++static PyObject *
+ list_inplace_repeat(PyListObject *self, Py_ssize_t n)
+ {
+     PyObject **items;
+@@ -961,6 +1011,33 @@ reverse_slice(PyObject **lo, PyObject **hi)
+     }
+ }
+ 
++static PyObject *
++listsplit(PyObject *self,
++      PyObject *length)
++{
++    if (!PyLong_CheckExact(length)) {
++        PyErr_SetString(PyExc_TypeError, "length must be int");
++        return NULL;
++    }
++
++    switch(_PyLong_Sign(length)) {
++    case 0:
++        PyErr_SetString(PyExc_ValueError, "split length can't be 0");
++        return NULL;
++    case -1:
++        PyErr_SetString(PyExc_ValueError, "split length must be positive");
++        return NULL;
++    }
++
++    Py_ssize_t len = PyLong_AsSsize_t(length);
++    if (len == (Py_ssize_t) -1) {
++        PyErr_SetString(PyExc_OverflowError, "split length is too big");
++        return NULL;
++    }
++    return list_split(self, len);
++}
++
++
+ /* Lots of code for an adaptive, stable, natural mergesort.  There are many
+  * pieces to this algorithm; read listsort.txt for overviews and details.
+  */
+@@ -2352,6 +2429,15 @@ PyDoc_STRVAR(pop_doc,
+ PyDoc_STRVAR(remove_doc,
+ "L.remove(value) -> None -- remove first occurrence of value.\n"
+ "Raises ValueError if the value is not present.");
++PyDoc_STRVAR(split_doc,
++"L.split(length) -> List[List[Any]] -- splits list into list of lists with max len=length each\n"
++">>> [1,2,3,4].split(3)\n"
++"[[1, 2, 3], [4]]\n"
++">>> [1,2,3,4].split(2)\n"
++"[[1, 2], [3, 4]]\n"
++">>> [1,2,3,4].split(10)\n"
++"[[1, 2, 3, 4]]\n"
++"Raises Overflowerror if the value is too big");
+ PyDoc_STRVAR(index_doc,
+ "L.index(value, [start, [stop]]) -> integer -- return first index of value.\n"
+ "Raises ValueError if the value is not present.");
+@@ -2375,6 +2461,7 @@ static PyMethodDef list_methods[] = {
+     {"extend",          (PyCFunction)listextend,  METH_O, extend_doc},
+     {"pop",             (PyCFunction)listpop,     METH_VARARGS, pop_doc},
+     {"remove",          (PyCFunction)listremove,  METH_O, remove_doc},
++    {"split",           (PyCFunction)listsplit,   METH_O, split_doc},
+     {"index",           (PyCFunction)listindex,   METH_VARARGS, index_doc},
+     {"count",           (PyCFunction)listcount,   METH_O, count_doc},
+     {"reverse",         (PyCFunction)listreverse, METH_NOARGS, reverse_doc},
