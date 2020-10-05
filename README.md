@@ -15,13 +15,14 @@ My python patches
 
 ## list.split.patch
 ```python
->>> a.split(3)
+>>> [1,2,3,4].split(3)
 [[1, 2, 3], [4]]
 >>> [1,2,3,4].split(2)
 [[1, 2], [3, 4]]
 >>> [1,2,3,4].split(10)
 [[1, 2, 3, 4]]
 ```
+list_str_split.patch is for v3.8.6
 
 ## bin_oct_hex.patch
 ```python
