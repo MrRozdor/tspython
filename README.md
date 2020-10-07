@@ -32,3 +32,29 @@ My python patches
 >>> hex(10486)
 '28f6'
 ```
+
+## TODO
+```python
+{qwe: 5}
+
+{POST: post, GET: get} = request
+
+seconds * 60s * 60m * 24h
+distance = 5h * 100kmph
+
+s .= lower()
+	a[5] .= attribute
+
+mb_none ?= 'default'
+	var.attr ?= 'default'
+	var['foo'] ?= 'default'
+
+5 if x
+	default simple types else
+```
+
+???
+```python
+a, b = 5, 10
+c = {a, b}
+```
