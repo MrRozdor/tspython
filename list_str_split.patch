@@ -1,0 +1,232 @@
+diff --git a/Include/listobject.h b/Include/listobject.h
+index 6057279d51..4c3a994d1b 100644
+--- a/Include/listobject.h
++++ b/Include/listobject.h
+@@ -55,6 +55,7 @@ PyAPI_FUNC(PyObject *) PyList_GetItem(PyObject *, Py_ssize_t);
+ PyAPI_FUNC(int) PyList_SetItem(PyObject *, Py_ssize_t, PyObject *);
+ PyAPI_FUNC(int) PyList_Insert(PyObject *, Py_ssize_t, PyObject *);
+ PyAPI_FUNC(int) PyList_Append(PyObject *, PyObject *);
++PyAPI_FUNC(PyObject *) PyList_Split(PyObject *, Py_ssize_t);
+ PyAPI_FUNC(PyObject *) PyList_GetSlice(PyObject *, Py_ssize_t, Py_ssize_t);
+ PyAPI_FUNC(int) PyList_SetSlice(PyObject *, Py_ssize_t, Py_ssize_t, PyObject *);
+ PyAPI_FUNC(int) PyList_Sort(PyObject *);
+diff --git a/Objects/clinic/listobject.c.h b/Objects/clinic/listobject.c.h
+index 57f0a48eb0..1645130b89 100644
+--- a/Objects/clinic/listobject.c.h
++++ b/Objects/clinic/listobject.c.h
+@@ -93,6 +93,19 @@ PyDoc_STRVAR(list_append__doc__,
+ #define LIST_APPEND_METHODDEF    \
+     {"append", (PyCFunction)list_append, METH_O, list_append__doc__},
+ 
++PyDoc_STRVAR(list_split__doc__,
++"L.split(length) -> List[List[Any]] -- splits list into list of lists with max len=length each\n"
++">>> [1,2,3,4].split(3)\n"
++"[[1, 2, 3], [4]]\n"
++">>> [1,2,3,4].split(2)\n"
++"[[1, 2], [3, 4]]\n"
++">>> [1,2,3,4].split(10)\n"
++"[[1, 2, 3, 4]]\n"
++"Raises Overflowerror if the value is too big");
++
++#define LIST_SPLIT_METHODDEF    \
++    {"split", (PyCFunction)listsplit, METH_O, list_split__doc__},
++
+ PyDoc_STRVAR(list_extend__doc__,
+ "extend($self, iterable, /)\n"
+ "--\n"
+diff --git a/Objects/listobject.c b/Objects/listobject.c
+index 30444089ff..cbde4c35d6 100644
+--- a/Objects/listobject.c
++++ b/Objects/listobject.c
+@@ -746,6 +746,56 @@ PyList_SetSlice(PyObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
+     return list_ass_slice((PyListObject *)a, ilow, ihigh, v);
+ }
+ 
++static PyObject *
++list_split(PyObject *self,
++	Py_ssize_t length)
++{
++	Py_ssize_t len_self;
++	Py_ssize_t count;
++	PyObject* out;
++	PyObject* item;
++
++	len_self = Py_SIZE(self);
++
++	if (length >= len_self) {
++		out = PyList_New(1);
++		if (out == NULL)
++			return NULL;
++		PyList_SET_ITEM(out, 0, self);
++		Py_INCREF(self);
++		return out;
++	}
++
++	register Py_ssize_t new_len = 1 + ((len_self - 1) / length); // len_self / length with rounding up
++	out = PyList_New(new_len);
++	count = 0;
++	for (Py_ssize_t i = 0; i < len_self; i += length) {
++		register Py_ssize_t possible_len = (i + length <= len_self) ? length : len_self - i;
++		item = PyList_GetSlice(self, i, i + possible_len);
++		if (item == NULL) {
++			Py_DECREF(out);
++			return NULL;
++		}
++		PyList_SET_ITEM(out, count, item);
++		count += 1;
++	}
++	return out;
++}
++
++PyObject *
++PyList_Split(PyObject *list, Py_ssize_t length)
++{
++	if (!PyList_Check(list)) {
++		PyErr_BadInternalCall();
++		return NULL;
++	}
++	if (length <= 0) {
++		PyErr_BadInternalCall();
++		return NULL;
++	}
++	return list_split(list, length);
++}
++
+ static PyObject *
+ list_inplace_repeat(PyListObject *self, Py_ssize_t n)
+ {
+@@ -1072,6 +1122,32 @@ reverse_slice(PyObject **lo, PyObject **hi)
+     }
+ }
+ 
++static PyObject *
++listsplit(PyObject *self,
++	PyObject *length)
++{
++	if (!PyLong_CheckExact(length)) {
++		PyErr_SetString(PyExc_TypeError, "length must be int");
++		return NULL;
++	}
++
++	switch (_PyLong_Sign(length)) {
++	case 0:
++		PyErr_SetString(PyExc_ValueError, "split length can't be 0");
++		return NULL;
++	case -1:
++		PyErr_SetString(PyExc_ValueError, "split length must be positive");
++		return NULL;
++	}
++
++	Py_ssize_t len = PyLong_AsSsize_t(length);
++	if (len == (Py_ssize_t)-1) {
++		PyErr_SetString(PyExc_OverflowError, "split length is too big");
++		return NULL;
++	}
++	return list_split(self, len);
++}
++
+ /* Lots of code for an adaptive, stable, natural mergesort.  There are many
+  * pieces to this algorithm; read listsort.txt for overviews and details.
+  */
+@@ -2781,6 +2857,7 @@ static PyMethodDef list_methods[] = {
+     LIST_CLEAR_METHODDEF
+     LIST_COPY_METHODDEF
+     LIST_APPEND_METHODDEF
++	LIST_SPLIT_METHODDEF
+     LIST_INSERT_METHODDEF
+     LIST_EXTEND_METHODDEF
+     LIST_POP_METHODDEF
+diff --git a/Objects/unicodeobject.c b/Objects/unicodeobject.c
+index 4c2b42f959..45a745b561 100644
+--- a/Objects/unicodeobject.c
++++ b/Objects/unicodeobject.c
+@@ -10334,6 +10334,80 @@ split(PyObject *self,
+     return out;
+ }
+ 
++static PyObject *
++split_by_len(PyObject *self,
++	PyObject *length)
++{
++	char *buf;
++	Py_ssize_t len1;
++	Py_ssize_t len2;
++	PyObject* out;
++	PyObject* sub;
++
++	if (PyUnicode_READY(self) == -1)
++		return NULL;
++
++	switch (_PyLong_Sign(length)) {
++	case 0:
++		PyErr_SetString(PyExc_ValueError, "split length can't be 0");
++		return NULL;
++	case -1:
++		PyErr_SetString(PyExc_ValueError, "split length must be positive");
++		return NULL;
++	}
++
++	len1 = PyUnicode_GET_LENGTH(self);
++	len2 = PyLong_AsSsize_t(length);
++
++	if (len2 == (Py_ssize_t)-1) {
++		PyErr_SetString(PyExc_OverflowError, "split length is too big");
++		return NULL;
++	}
++
++	if (len2 >= len1) {
++		out = PyList_New(1);
++		if (out == NULL)
++			return NULL;
++		PyList_SET_ITEM(out, 0, self);
++		Py_INCREF(self);
++		return out;
++	}
++
++	buf = PyUnicode_DATA(self);
++
++	register Py_ssize_t list_len = 1 + ((len1 - 1) / len2); // len1 / len2 with rounding up
++	out = PyList_New(list_len);
++	int count = 0;
++	for (Py_ssize_t i = 0; i < len1; i += len2) {
++		register Py_ssize_t possible_len = (i + len2 <= len1) ? len2 : len1 - i;
++		switch (PyUnicode_KIND(self)) {
++		case PyUnicode_1BYTE_KIND:
++			if (PyUnicode_IS_ASCII(self))
++				sub = _PyUnicode_FromASCII(buf + i, possible_len);
++			else
++				sub = _PyUnicode_FromUCS1(buf + i, possible_len);
++			break;
++		case PyUnicode_2BYTE_KIND:
++			sub = _PyUnicode_FromUCS2((Py_UCS2 *)(buf + i * 2), possible_len);
++			break;
++		case PyUnicode_4BYTE_KIND:
++			sub = _PyUnicode_FromUCS4((Py_UCS4 *)(buf + i * 4), possible_len);
++			break;
++		default:
++			assert(0);
++			return NULL;
++		}
++		if (sub == NULL) {
++			Py_DECREF(out);
++			return NULL;
++		}
++		PyList_SET_ITEM(out, count, sub);
++		count += 1;
++	}
++
++	return out;
++}
++
+ static PyObject *
+ rsplit(PyObject *self,
+        PyObject *substring,
+@@ -12916,6 +12990,8 @@ unicode_split_impl(PyObject *self, PyObject *sep, Py_ssize_t maxsplit)
+ {
+     if (sep == Py_None)
+         return split(self, NULL, maxsplit);
++	if (PyLong_CheckExact(sep))
++		return split_by_len(self, sep);
+     if (PyUnicode_Check(sep))
+         return split(self, sep, maxsplit);
+ 
